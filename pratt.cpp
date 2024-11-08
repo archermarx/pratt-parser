@@ -23,14 +23,15 @@ using std::unique_ptr, std::make_unique;
 ////== Op definition ====={{{
 struct Op {
 #define OP_LIST \
-  X(Add, +) \
-    X(Sub, -) \
-    X(Mul, *) \
-    X(Div, /)
+    X(Add, +, 1, 1) \
+    X(Sub, -, 1, 1) \
+    X(Mul, *, 2, 2) \
+    X(Div, /, 2, 2) \
+    X(Exp, ^, 3, 3)
 
   enum class Kind {
     None = 0,
-    #define X(OpKind, _) OpKind,
+    #define X(OpKind, _0, _1, _2) OpKind,
     OP_LIST
     #undef X
     NumOps,
@@ -39,8 +40,8 @@ struct Op {
   Kind type = Kind::None;
 
   static constexpr array Names {
+    #define X(OpKind, _0, _1, _2) #OpKind,
     "NoOp",
-#define X(OpKind, _) #OpKind,
     OP_LIST
     #undef X
   };
@@ -50,8 +51,8 @@ struct Op {
   }
 
   static constexpr array Symbols {
+    #define X(_0, OpSymbol, _1, _2) #OpSymbol,
     "<none>",
-#define X(_, OpSymbol) #OpSymbol,
     OP_LIST
     #undef X
   };
@@ -59,23 +60,6 @@ struct Op {
   string symbol() const {
     return this->Symbols[static_cast<size_t>(this->type)];
   }
-
-  f64 eval (f64 a, f64 b) const {
-    switch(this->type) {
-#define X(_Op, _Symbol) case Kind::_Op: { return a _Symbol b; }
-      OP_LIST
-      #undef X
-      default: assert(false);
-    }
-  }
-
-  static Op classify(std::string str) {
-    if (str == "") { return {}; }
-#define X(_Op, _Symbol) else if (str == #_Symbol) { return {Kind::_Op}; }
-    OP_LIST
-    #undef X
-    else { return {}; }
-};
 };
 ////== end op definition }}}
 
@@ -166,16 +150,16 @@ struct Tokenizer {
 
     u8 c = peek();
 
+    #define X(_Type, _Symbol, _1, _2) case (#_Symbol)[0]: { index++; return Op{Op::Kind::_Type}; }
     switch(c) {
-#define X(_Type, _Symbol) case (#_Symbol)[0]: { index++; return Op{Op::Kind::_Type}; }
       OP_LIST
-      #undef X
       default:
         if (is_digit(c)) return read_number();
         // Unclassifiable -- abort
         Token tok = c;
         throw std::runtime_error(format("Unexpected token {} at byte {} of stream", tok.str(), index));
     }
+    #undef X
   }
 
   vector<Token> tokenize() {
@@ -292,7 +276,7 @@ struct Parser {
 //== end parser }}}
 
 int main() {
-  string stream = "2*2 + 2 / 3 * 5";
+  string stream = "2*2 + 2 / 3 * 5^2";
   Tokenizer tokenizer {.stream = {stream.begin(), stream.end()}};
   auto tokens = tokenizer.tokenize();
 
