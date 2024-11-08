@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cstddef>
 #include <format>
+#include <ios>
 #include <iostream>
 #include <cstdint>
 #include <memory>
@@ -18,8 +19,9 @@ using f32 = float;
 using f64 = double;
 
 using std::string, std::vector, std::array, std::cout, std::format;
-using std::variant, std::holds_alternative, std::get_if, std::get;
+using std::unique_ptr, std::make_unique;
 
+//== Tokenizer ====={{{
 struct Op {
 #define OP_LIST \
   X(Add, +) \
@@ -27,19 +29,19 @@ struct Op {
     X(Mul, *) \
     X(Div, /)
 
-  enum class Type {
+  enum class Kind {
     None = 0,
-    #define X(OpType, _) OpType,
+    #define X(OpKind, _) OpKind,
     OP_LIST
     #undef X
     NumOps,
   };
 
-  Type type = Type::None;
+  Kind type = Kind::None;
 
   static constexpr array Names {
     "NoOp",
-#define X(OpType, _) #OpType,
+#define X(OpKind, _) #OpKind,
     OP_LIST
     #undef X
   };
@@ -61,7 +63,7 @@ struct Op {
 
   f64 eval (f64 a, f64 b) const {
     switch(this->type) {
-#define X(_Op, _Symbol) case Type::_Op: { return a _Symbol b; }
+#define X(_Op, _Symbol) case Kind::_Op: { return a _Symbol b; }
       OP_LIST
       #undef X
       default: assert(false);
@@ -70,7 +72,7 @@ struct Op {
 
   static Op classify(std::string str) {
     if (str == "") { return {}; }
-#define X(_Op, _Symbol) else if (str == #_Symbol) { return {Type::_Op}; }
+#define X(_Op, _Symbol) else if (str == #_Symbol) { return {Kind::_Op}; }
     OP_LIST
     #undef X
     else { return {}; }
@@ -157,7 +159,7 @@ struct Tokenizer {
     u8 c = peek();
 
     switch(c) {
-#define X(_Type, _Symbol) case (#_Symbol)[0]: { index++; return Op{Op::Type::_Type}; }
+#define X(_Type, _Symbol) case (#_Symbol)[0]: { index++; return Op{Op::Kind::_Type}; }
       OP_LIST
       #undef X
       default:
@@ -176,17 +178,63 @@ struct Tokenizer {
     return tokens;
   }
 };
+//== end tokenizer }}}
 
-struct ExprNode;
+//== Parser ===== {{{
 
-using Expr = variant<ExprNode, i64>;
+struct Expr{
+  enum class Kind {
+    None,
+    Literal,
+    Expr,
+  } kind = kind = Kind::None;
 
-struct ExprNode {
-  Op op;
-  std::unique_ptr<Expr> left;
-  std::unique_ptr<Expr> right;
+  union {
+    i64 literal;
+    struct {
+      Op op;
+      unique_ptr<Expr> left;
+      unique_ptr<Expr> right;
+    } expr;
+  };
+
+  string str();
+
+  friend std::ostream& operator<< (std::ostream &os, const Expr& expr);
+
+  Expr(i64 val): kind(Kind::Literal), literal(val) {}
+  Expr(Op::Kind op, unique_ptr<Expr> left, unique_ptr<Expr> right) {
+    kind = Kind::Expr;
+    expr.op = {op};
+    new (&expr.left) unique_ptr<Expr>(std::move(left));
+    new (&expr.right) unique_ptr<Expr>(std::move(right));
+  }
+  ~Expr() {
+    switch(kind) {
+      case Kind::None:
+      case Kind::Literal:
+        break;
+      case Kind::Expr:
+        expr.left.~unique_ptr<Expr>();
+        expr.right.~unique_ptr<Expr>();
+        break;
+    }
+  }
+  
+  static unique_ptr<Expr> Literal(i64 val) {
+    return make_unique<Expr>(val);
+  }
 };
 
+string Expr::str() {
+  switch(kind) {
+    case Kind::None: return "<none>";
+    case Kind::Literal: return format("{}", literal);
+    case Kind::Expr: return format("({} {} {})", expr.op.symbol(), expr.left->str(), expr.right->str());
+  }
+}
+
+//== end parser }}}
 
 int main() {
   string stream = "2 + 2 / 52";
@@ -197,6 +245,18 @@ int main() {
   for (auto tok: tokens) {
     std::cout << tok << std::endl;
   }
+
+  auto expr = Expr(
+      Op::Kind::Add,
+      Expr::Literal(1),
+      make_unique<Expr>(
+        Op::Kind::Mul,
+        Expr::Literal(5),
+        Expr::Literal(2)
+      )
+  );
+
+  std::cout << "Expr: " << expr.str() << "\n";
 
   return 0;
 }
