@@ -49,96 +49,102 @@ i64 powi(i64 x, i64 p) {
   return powu(x, (usize)p);
 }
 
+i64 factorial_unchecked(i64 x) {
+  if (x == 0 || x == 1) {
+    return 1;
+  }
+  return x * factorial_unchecked(x-1);
+}
+
+i64 factorial(i64 x) {
+  if (x > 21) {
+    throw std::runtime_error(format("{}! will overflow!", x));
+  }
+  if (x < 0) {
+    throw std::runtime_error(format("Factorial of negative integer {} is not defined", x));
+  }
+  return factorial_unchecked(x);
+}
+
 //== Tokenizer ====={{{
 ////== Op definition ====={{{
 struct Op {
-    // Name, symbol, left infix bp, right infix bp, prefix bp
+    // Name, symbol, left infix bp, right infix bp, prefix bp, postfix bp
     // zero bp means the operator is invalid in that position
 #define OP_LIST \
-    X(Add, +, 1, 2, 5) \
-    X(Sub, -, 1, 2, 5) \
-    X(Mul, *, 3, 4, 0) \
-    X(Div, /, 3, 4, 0) \
-    X(Exp, ^, 7, 8, 0)
+    X(Add, +, 1, 2, 5, 0) \
+    X(Sub, -, 1, 2, 5, 0) \
+    X(Mul, *, 3, 4, 0, 0) \
+    X(Div, /, 3, 4, 0, 0) \
+    X(Exp, ^, 9, 10, 0, 0) \
+    X(Fact, !, 0, 0, 0, 7)
 
   enum class Kind {
-    None = 0,
-    #define X(OpKind, _0, _1, _2, _3) OpKind,
-    OP_LIST
-    #undef X
-    NumOps,
-  };
-
-  Kind kind = Kind::None;
-
-  static constexpr array LeftBindingPowers {
-    #define X(_0, _1, bp, _2, _3) static_cast<u8>(bp),
-    static_cast<u8>(0),
+    #define X(OpKind, _0, _1, _2, _3, _4) OpKind,
     OP_LIST
     #undef X
   };
 
-  static constexpr array RightBindingPowers {
-    #define X(_0, _1, _2, bp, _3) static_cast<u8>(bp),
-    static_cast<u8>(0),
-    OP_LIST
-    #undef X
-  };
+  Kind kind;
 
-  static constexpr array InfixBindingPowers {
-    #define X(_0, _1, _2, _3, bp) static_cast<u8>(bp),
-    static_cast<u8>(0),
-    OP_LIST
-    #undef X
-  };
+  Op(Kind kind): kind(kind) {}
 
-  pair<u8,u8> infix_binding_power() const {
-    auto l_bp = this->LeftBindingPowers[static_cast<usize>(this->kind)];
-    auto r_bp = this->RightBindingPowers[static_cast<usize>(this->kind)];
-    return {l_bp, r_bp};
+  pair<u8, u8> infix_binding_power() const {
+    #define X(op, _0, l_bp, r_bp, _1, _2) case Kind::op: return {l_bp, r_bp};
+    switch(kind) {
+      OP_LIST 
+    }
+    #undef X
   }
 
-  u8 prefix_binding_power() const {
-    return this->InfixBindingPowers[static_cast<usize>(this->kind)];
+  pair<u8, u8> prefix_binding_power() const {
+    #define X(op, _0, _1, _2, bp, _3) case Kind::op: return {0, bp}; 
+    switch(kind) {
+      OP_LIST
+    }
+    #undef X
   }
 
-  static constexpr array Names {
-    #define X(OpKind, _0, _1, _2, _3) #OpKind,
-    "NoOp",
-    OP_LIST
+  pair<u8, u8> postfix_binding_power() const {
+    #define X(op, _0, _1, _2, _3, bp) case Kind::op: return {bp, 0};
+    switch(kind) {
+      OP_LIST
+    }
     #undef X
-  };
-
-  string name() const {
-    return this->Names[static_cast<size_t>(this->kind)];
   }
 
-  static constexpr array Symbols {
-    #define X(_0, OpSymbol, _1, _2, _3) #OpSymbol,
-    "<none>",
-    OP_LIST
+  string name() {
+    #define X(op, _0, _1, _2, _3, _4) case Kind::op: return #op;
+    switch(kind) {
+      OP_LIST
+    }
     #undef X
-  };
+  } 
 
-  string symbol() const {
-    return this->Symbols[static_cast<size_t>(this->kind)];
+  string symbol() {
+    #define X(op, sym, _0, _1, _2, _3) case Kind::op: return #sym;
+    switch(kind) {
+      OP_LIST
+    }
+    #undef X
   }
 
   i64 eval(i64 x)  {
     switch(this->kind) {
       case Kind::Add: return x;
       case Kind::Sub: return -x;
+      case Kind::Fact: return factorial(x);
       default: throw std::runtime_error(format("Invalid unary operator '{}'. This should be unreachable.", this->symbol()));
     }
   }
 
   i64 eval(i64 left, i64 right) {
     switch(this->kind){
-      case Kind::Add: return left + right;
-      case Kind::Sub: return left - right;
-      case Kind::Mul: return left * right;
-      case Kind::Div: return left / right;
-      case Kind::Exp: return powi(left, right);
+      case Kind::Add:  return left + right;
+      case Kind::Sub:  return left - right;
+      case Kind::Mul:  return left * right;
+      case Kind::Div:  return left / right;
+      case Kind::Exp:  return powi(left, right);
       default: throw std::runtime_error(format("Invalid infix operator '{}'. This should be unreachable", this->symbol()));
     }
 
@@ -236,7 +242,7 @@ struct Tokenizer {
 
     u8 c = peek();
 
-    #define X(_Type, _Symbol, _1, _2, _3) case (#_Symbol)[0]: { index++; return Op{Op::Kind::_Type}; }
+    #define X(op, sym, _0, _1, _2, _3) case (#sym)[0]: { index++; return {Op::Kind::op}; }
     switch(c) {
       OP_LIST
       default:
@@ -362,7 +368,7 @@ struct Parser {
       case Token::Kind::Op: {  
         // prefix operator
         auto op = lhs_tok.op;
-        auto bp = op.prefix_binding_power();
+        auto [_, bp] = op.prefix_binding_power();
         if (bp == 0) throw std::runtime_error(format("Invalid unary operator '{}'", op.symbol()));
         auto rhs = parse_expr(bp);
         lhs = make_unique<Expr>(op, std::move(rhs));
@@ -379,7 +385,17 @@ struct Parser {
 
       // token is op
       auto op = tok.op;
+
       auto [l_bp, r_bp] = op.infix_binding_power();
+
+      // check if this op is a postfix op and parse if so
+      if (l_bp == 0 && r_bp == 0) {
+        auto [bp, _] = op.postfix_binding_power();
+        if (bp < min_bp) break;
+        next();
+        lhs = make_unique<Expr>(op, std::move(lhs));
+        continue;
+      }
 
       if (l_bp < min_bp) break;
 
