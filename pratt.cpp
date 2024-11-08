@@ -20,6 +20,30 @@ using f64 = double;
 using std::string, std::vector, std::array, std::cout, std::format;
 using std::unique_ptr, std::make_unique, std::pair;
 
+constexpr i64 powi(i64 x, usize p) {
+  // special casing
+  switch(p) {
+    case (0): return 1;
+    case (1): return x;
+    case (2): return x*x;
+    case (3): return x*x*x;
+    case (4): return x*x*x*x;
+    default:
+      break;
+  }
+
+  // power by repeated squaring
+  i64 res = x;
+  i64 p_cur = 1;
+  while (2*p_cur < p) {
+    res = res*res;
+    p_cur *= 2;
+  }
+
+  i64 remainder = p - p_cur;
+  return res * powi(x, remainder);
+}
+
 //== Tokenizer ====={{{
 ////== Op definition ====={{{
 struct Op {
@@ -38,7 +62,7 @@ struct Op {
     NumOps,
   };
 
-  Kind type = Kind::None;
+  Kind kind = Kind::None;
 
   static constexpr array LeftBindingPowers {
     #define X(_0, _1, bp, _2) static_cast<u8>(bp),
@@ -55,8 +79,8 @@ struct Op {
   };
 
   pair<u8,u8> infix_binding_power() const {
-    auto l_bp = this->LeftBindingPowers[static_cast<usize>(this->type)];
-    auto r_bp = this->RightBindingPowers[static_cast<usize>(this->type)];
+    auto l_bp = this->LeftBindingPowers[static_cast<usize>(this->kind)];
+    auto r_bp = this->RightBindingPowers[static_cast<usize>(this->kind)];
     return {l_bp, r_bp};
   }
 
@@ -68,7 +92,7 @@ struct Op {
   };
 
   string name() const {
-    return this->Names[static_cast<size_t>(this->type)];
+    return this->Names[static_cast<size_t>(this->kind)];
   }
 
   static constexpr array Symbols {
@@ -79,7 +103,19 @@ struct Op {
   };
 
   string symbol() const {
-    return this->Symbols[static_cast<size_t>(this->type)];
+    return this->Symbols[static_cast<size_t>(this->kind)];
+  }
+
+  i64 eval(i64 left, i64 right) {
+    switch(this->kind){
+      case Kind::Add: return left + right;
+      case Kind::Sub: return left - right;
+      case Kind::Mul: return left * right;
+      case Kind::Div: return left / right;
+      case Kind::Exp: return powi(left, right);
+      default: throw std::runtime_error(format("Invalid operator {}. This should be unreachable", this->name()));
+    }
+
   }
 };
 ////== end op definition }}}
@@ -242,6 +278,14 @@ struct Expr{
   static unique_ptr<Expr> Literal(i64 val) {
     return make_unique<Expr>(val);
   }
+
+  i64 eval() {
+    switch(this->kind) {
+      case Kind::None: throw std::runtime_error("Attempt to eval expr of type None");
+      case Kind::Literal: return this->literal;
+      case Kind::Expr: return this->expr.op.eval(this->expr.left->eval(), this->expr.right->eval());
+    } 
+  }
 };
 
 string Expr::str() {
@@ -308,23 +352,55 @@ struct Parser {
 
 int main(int argc, char **argv) {
   if (argc == 1) throw std::runtime_error("No argument!");
-  string stream = argv[1];
+
+  string stream = "";
+  bool print_tokens = false;
+  bool print_ast = false;
+
+  for (int i = 1; i < argc; i++) {
+    string arg = argv[i];
+    if (arg[0] == '-') {
+      for (auto c: arg) {
+        switch(c) {
+          case 'a': print_ast = true; break;
+          case 't': print_tokens = true; break;
+          default: break;
+        }
+      }
+      continue;
+    }
+    if (stream != "") {
+      throw std::runtime_error("Too many arguments");
+    }
+    stream = arg;
+  }
+
   Tokenizer tokenizer(stream);
   auto tokens = tokenizer.tokenize();
 
-  cout << "#== Tokens ==\n";
 
-  for (auto tok: tokens) {
-    std::cout << tok.str() << std::endl;
+
+  if (print_tokens) {
+    cout << "#== Tokens ==\n";
+
+    for (auto tok: tokens) {
+      std::cout << tok.str() << "\n";
+    }
+
+    cout << "\n";
   }
 
-  cout << "\n#== AST =====\n";
-
   Parser p {.tokens = tokens};
-  
   auto expr = p.parse_expr();
 
-  std::cout << expr->str() << std::endl;
+  if (print_ast) {
+    cout << "#== AST =====\n";
+    std::cout << expr->str() << "\n\n";
+  }
+
+  auto result = expr->eval();
+
+  std::cout << result << std::endl;
 
   return 0;
 }
