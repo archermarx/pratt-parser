@@ -1,13 +1,11 @@
 #include <cassert>
 #include <cstddef>
 #include <format>
-#include <ios>
 #include <iostream>
 #include <cstdint>
 #include <memory>
 #include <ostream>
 #include <stdexcept>
-#include <variant>
 #include <vector>
 
 using u8 = uint8_t;
@@ -22,6 +20,7 @@ using std::string, std::vector, std::array, std::cout, std::format;
 using std::unique_ptr, std::make_unique;
 
 //== Tokenizer ====={{{
+////== Op definition ====={{{
 struct Op {
 #define OP_LIST \
   X(Add, +) \
@@ -78,6 +77,9 @@ struct Op {
     else { return {}; }
 };
 };
+////== end op definition }}}
+
+///== Token definition==={{{
 
 struct Token {
   enum class Kind  {
@@ -101,11 +103,9 @@ struct Token {
       default: return format("<'{:c}'(0x{:2x})>", byte, byte);
     }
   }
-
-  friend std::ostream& operator<< (std::ostream& os, Token tok);
 };
 
-std::ostream& operator<< (std::ostream &os, Token tok) { return os << tok.str(); }
+////== end token definition }}}
 
 bool is_space(u8 c) {
   return c == ' ' || c == '\n' || c == '\r' || c == '\t';
@@ -182,6 +182,7 @@ struct Tokenizer {
 
 //== Parser ===== {{{
 
+////== Expr definition ===== {{{
 struct Expr{
   enum class Kind {
     None,
@@ -233,6 +234,30 @@ string Expr::str() {
     case Kind::Expr: return format("({} {} {})", expr.op.symbol(), expr.left->str(), expr.right->str());
   }
 }
+////== end expr struct definition }}}
+
+struct Parser {
+  vector<Token> tokens {};
+  i64 index = 0;
+  
+  Token peek() const {
+    if (index <= tokens.size()) return {};
+    return tokens[index];
+  }
+
+  unique_ptr<Expr> parse() {
+    return make_unique<Expr>(
+        Op::Kind::Add,
+        Expr::Literal(1),
+        make_unique<Expr>(
+          Op::Kind::Mul,
+          Expr::Literal(5),
+          Expr::Literal(2)
+        )
+    );
+  }
+};
+
 
 //== end parser }}}
 
@@ -241,22 +266,19 @@ int main() {
   Tokenizer tokenizer {.stream = {stream.begin(), stream.end()}};
   auto tokens = tokenizer.tokenize();
 
+  cout << "#== Tokens ==\n";
 
   for (auto tok: tokens) {
-    std::cout << tok << std::endl;
+    std::cout << tok.str() << std::endl;
   }
 
-  auto expr = Expr(
-      Op::Kind::Add,
-      Expr::Literal(1),
-      make_unique<Expr>(
-        Op::Kind::Mul,
-        Expr::Literal(5),
-        Expr::Literal(2)
-      )
-  );
+  cout << "#== AST ==\n";
 
-  std::cout << "Expr: " << expr.str() << "\n";
+  Parser p {.tokens = tokens};
+  
+  auto expr = p.parse();
+
+  std::cout << expr->str() << std::endl;
 
   return 0;
 }
