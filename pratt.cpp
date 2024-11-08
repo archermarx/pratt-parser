@@ -134,7 +134,10 @@ bool is_hexdigit(u8 c) {
 
 struct Tokenizer {
   std::vector<u8> stream;
-  usize index;
+  usize index = 0;
+
+  Tokenizer(string s): stream(s.begin(), s.end()) {}
+  Tokenizer(vector<u8> stream): stream(stream) {}
 
   u8 peek(i64 n = 0) {
     if (index + n >= stream.size()) {
@@ -303,9 +306,10 @@ struct Parser {
 
 //== end parser }}}
 
-int main() {
-  string stream = "1 + 2 * 3 * 4 + 5";
-  Tokenizer tokenizer {.stream = {stream.begin(), stream.end()}};
+int main(int argc, char **argv) {
+  if (argc == 1) throw std::runtime_error("No argument!");
+  string stream = argv[1];
+  Tokenizer tokenizer(stream);
   auto tokens = tokenizer.tokenize();
 
   cout << "#== Tokens ==\n";
