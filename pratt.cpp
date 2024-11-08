@@ -6,6 +6,7 @@
 #include <memory>
 #include <ostream>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 using u8 = uint8_t;
@@ -17,17 +18,17 @@ using f32 = float;
 using f64 = double;
 
 using std::string, std::vector, std::array, std::cout, std::format;
-using std::unique_ptr, std::make_unique;
+using std::unique_ptr, std::make_unique, std::pair;
 
 //== Tokenizer ====={{{
 ////== Op definition ====={{{
 struct Op {
 #define OP_LIST \
-    X(Add, +, 1, 1) \
-    X(Sub, -, 1, 1) \
-    X(Mul, *, 2, 2) \
-    X(Div, /, 2, 2) \
-    X(Exp, ^, 3, 3)
+    X(Add, +, 1, 2) \
+    X(Sub, -, 1, 2) \
+    X(Mul, *, 3, 4) \
+    X(Div, /, 3, 4) \
+    X(Exp, ^, 5, 6)
 
   enum class Kind {
     None = 0,
@@ -38,6 +39,26 @@ struct Op {
   };
 
   Kind type = Kind::None;
+
+  static constexpr array LeftBindingPowers {
+    #define X(_0, _1, bp, _2) static_cast<u8>(bp),
+    static_cast<u8>(0),
+    OP_LIST
+    #undef X
+  };
+
+  static constexpr array RightBindingPowers {
+    #define X(_0, _1, _2, bp) static_cast<u8>(bp),
+    static_cast<u8>(0),
+    OP_LIST
+    #undef X
+  };
+
+  pair<u8,u8> infix_binding_power() const {
+    auto l_bp = this->LeftBindingPowers[static_cast<usize>(this->type)];
+    auto r_bp = this->RightBindingPowers[static_cast<usize>(this->type)];
+    return {l_bp, r_bp};
+  }
 
   static constexpr array Names {
     #define X(OpKind, _0, _1, _2) #OpKind,
@@ -244,31 +265,38 @@ struct Parser {
     return tok;
   }
 
-  void expect(Token::Kind expected) const {
-    auto got = peek().kind;
-    if (got != expected) {
+  Token expect(Token::Kind expected) {
+    auto got = this->next();
+    if (got.kind != expected) {
       throw std::runtime_error(
         format("Expected token of kind {}, got {}", 
-               tokenkind_name(expected), tokenkind_name(got))
+               tokenkind_name(expected), tokenkind_name(got.kind))
       );
     }
+    return got;
   }
+  
+  unique_ptr<Expr> parse_expr(u8 min_bp = 0) {
+    auto lhs_val = this->expect(Token::Kind::Int);
+    auto lhs = Expr::Literal(lhs_val.integer);
 
-  unique_ptr<Expr> parse() {
-    expect(Token::Kind::Int);
-    auto left = Expr::Literal(next().integer);
-    switch(peek().kind) {
-      case Token::Kind::None:
-        return left;
-      case Token::Kind::Op: {
-        auto op = next().op;
-        auto right = parse();
-        return make_unique<Expr>(op, std::move(left), std::move(right));
-      }
-      default:
-        expect(Token::Kind::Op);
-        return unique_ptr<Expr>();
+    while (true) {
+      auto tok = peek();
+      if (tok.kind == Token::Kind::None) break; // EOF
+      if (tok.kind != Token::Kind::Op) throw std::runtime_error("Expected operator!");
+
+      // token is op
+      auto op = tok.op;
+      auto [l_bp, r_bp] = op.infix_binding_power();
+
+      if (l_bp < min_bp) break;
+
+      next();
+      auto rhs = parse_expr(r_bp);
+      lhs = make_unique<Expr>(op, std::move(lhs), std::move(rhs));
     }
+
+    return lhs;
   }
 };
 
@@ -276,7 +304,7 @@ struct Parser {
 //== end parser }}}
 
 int main() {
-  string stream = "2*2 + 2 / 3 * 5^2";
+  string stream = "1 + 2 * 3 * 4 + 5";
   Tokenizer tokenizer {.stream = {stream.begin(), stream.end()}};
   auto tokens = tokenizer.tokenize();
 
@@ -290,7 +318,7 @@ int main() {
 
   Parser p {.tokens = tokens};
   
-  auto expr = p.parse();
+  auto expr = p.parse_expr();
 
   std::cout << expr->str() << std::endl;
 
