@@ -17,8 +17,8 @@ using isize = ptrdiff_t;
 using f32 = float;
 using f64 = double;
 
-using std::string, std::vector, std::array, std::cout, std::endl, std::format;
-using std::unique_ptr, std::make_unique, std::pair, std::make_pair, std::optional;
+using std::string, std::vector, std::cout, std::endl, std::format;
+using std::unique_ptr, std::make_unique, std::pair, std::optional;
 
 constexpr i64 powu(i64 x, usize p) {
   // special casing
