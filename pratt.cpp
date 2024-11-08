@@ -18,7 +18,7 @@ using f32 = float;
 using f64 = double;
 
 using std::string, std::vector, std::array, std::cout, std::endl, std::format;
-using std::unique_ptr, std::make_unique, std::pair;
+using std::unique_ptr, std::make_unique, std::pair, std::make_pair, std::optional;
 
 constexpr i64 powu(i64 x, usize p) {
   // special casing
@@ -66,21 +66,27 @@ i64 factorial(i64 x) {
   return factorial_unchecked(x);
 }
 
+using BindingPower = optional<pair<u8,u8>>;
+
 //== Tokenizer ====={{{
 ////== Op definition ====={{{
 struct Op {
-    // Name, symbol, left infix bp, right infix bp, prefix bp, postfix bp
-    // zero bp means the operator is invalid in that position
+    // Name, symbol, (left,right) infix bp, prefix bp, postfix bp
+    // NOBP means means the operator is invalid in that position
+#define NOBP
+#define INFIX(...) {__VA_ARGS__}
+#define PREFIX(...) {0, __VA_ARGS__}
+#define POSTFIX(...) {__VA_ARGS__, 0}
 #define OP_LIST \
-    X(Add, +, 1, 2, 5, 0) \
-    X(Sub, -, 1, 2, 5, 0) \
-    X(Mul, *, 3, 4, 0, 0) \
-    X(Div, /, 3, 4, 0, 0) \
-    X(Exp, ^, 9, 10, 0, 0) \
-    X(Fact, !, 0, 0, 0, 7)
+    X(Add,  +, INFIX(1,2) , PREFIX(5), NOBP) \
+    X(Sub,  -, INFIX(1,2) , PREFIX(5), NOBP) \
+    X(Mul,  *, INFIX(3,4) , NOBP,      NOBP) \
+    X(Div,  /, INFIX(3,4) , NOBP,      NOBP) \
+    X(Exp,  ^, INFIX(9,10), NOBP,      NOBP) \
+    X(Fact, !, NOBP,        NOBP,      POSTFIX(7)) \
 
   enum class Kind {
-    #define X(OpKind, _0, _1, _2, _3, _4) OpKind,
+    #define X(op, _0, _1, _2, _3) op,
     OP_LIST
     #undef X
   };
@@ -89,24 +95,24 @@ struct Op {
 
   Op(Kind kind): kind(kind) {}
 
-  pair<u8, u8> infix_binding_power() const {
-    #define X(op, _0, l_bp, r_bp, _1, _2) case Kind::op: return {l_bp, r_bp};
-    switch(kind) {
-      OP_LIST 
-    }
-    #undef X
-  }
-
-  pair<u8, u8> prefix_binding_power() const {
-    #define X(op, _0, _1, _2, bp, _3) case Kind::op: return {0, bp}; 
+  BindingPower infix_binding_power() const {
+    #define X(op, _0, bp, _1, _2) case Kind::op: return {bp}; 
     switch(kind) {
       OP_LIST
     }
     #undef X
   }
 
-  pair<u8, u8> postfix_binding_power() const {
-    #define X(op, _0, _1, _2, _3, bp) case Kind::op: return {bp, 0};
+  BindingPower prefix_binding_power() const {
+    #define X(op, _0, _1, bp, _2) case Kind::op: return {bp}; 
+    switch(kind) {
+      OP_LIST
+    }
+    #undef X
+  }
+
+  BindingPower postfix_binding_power() const {
+    #define X(op, _0, _1, _2, bp) case Kind::op: return {bp};
     switch(kind) {
       OP_LIST
     }
@@ -114,7 +120,7 @@ struct Op {
   }
 
   string name() {
-    #define X(op, _0, _1, _2, _3, _4) case Kind::op: return #op;
+    #define X(op, _0, _1, _2, _3) case Kind::op: return #op;
     switch(kind) {
       OP_LIST
     }
@@ -122,7 +128,7 @@ struct Op {
   } 
 
   string symbol() {
-    #define X(op, sym, _0, _1, _2, _3) case Kind::op: return #sym;
+    #define X(op, sym, _0, _1, _2) case Kind::op: return #sym;
     switch(kind) {
       OP_LIST
     }
@@ -150,6 +156,10 @@ struct Op {
 
   }
 };
+#undef INFIX
+#undef PREFIX
+#undef POSTFIX
+#undef NOBP
 ////== end op definition }}}
 
 ///== Token definition==={{{
@@ -242,7 +252,7 @@ struct Tokenizer {
 
     u8 c = peek();
 
-    #define X(op, sym, _0, _1, _2, _3) case (#sym)[0]: { index++; return {Op::Kind::op}; }
+    #define X(op, sym, _0, _1, _2) case (#sym)[0]: { index++; return {Op::Kind::op}; }
     switch(c) {
       OP_LIST
       default:
@@ -368,8 +378,12 @@ struct Parser {
       case Token::Kind::Op: {  
         // prefix operator
         auto op = lhs_tok.op;
-        auto [_, bp] = op.prefix_binding_power();
-        if (bp == 0) throw std::runtime_error(format("Invalid unary operator '{}'", op.symbol()));
+
+        // get binding power and unwrap
+        auto bp_opt = op.prefix_binding_power();
+        if (!bp_opt.has_value()) throw std::runtime_error(format("Invalid unary operator '{}'", op.symbol()));
+        auto [_, bp] = bp_opt.value();
+
         auto rhs = parse_expr(bp);
         lhs = make_unique<Expr>(op, std::move(rhs));
         break;
@@ -386,17 +400,19 @@ struct Parser {
       // token is op
       auto op = tok.op;
 
-      auto [l_bp, r_bp] = op.infix_binding_power();
-
-      // check if this op is a postfix op and parse if so
-      if (l_bp == 0 && r_bp == 0) {
-        auto [bp, _] = op.postfix_binding_power();
+      // Check for postfix operator
+      if (auto power = op.postfix_binding_power(); power.has_value()) {
+        auto [bp, _] = power.value();
         if (bp < min_bp) break;
         next();
         lhs = make_unique<Expr>(op, std::move(lhs));
         continue;
       }
 
+      // Check for infix operator
+      auto [l_bp, r_bp] = op.infix_binding_power().value();
+
+      // check if this op is a postfix op and parse if so
       if (l_bp < min_bp) break;
 
       next();
