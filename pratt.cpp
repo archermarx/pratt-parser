@@ -119,7 +119,7 @@ struct Op {
     #undef X
   }
 
-  string name() {
+  string name() const {
     #define X(op, _0, _1, _2, _3) case Kind::op: return #op;
     switch(kind) {
       OP_LIST
@@ -127,7 +127,7 @@ struct Op {
     #undef X
   } 
 
-  string symbol() {
+  string symbol() const {
     #define X(op, sym, _0, _1, _2) case Kind::op: return #sym;
     switch(kind) {
       OP_LIST
@@ -135,7 +135,7 @@ struct Op {
     #undef X
   }
 
-  i64 eval(i64 x)  {
+  i64 eval(i64 x) const {
     switch(this->kind) {
       case Kind::Add: return x;
       case Kind::Sub: return -x;
@@ -144,7 +144,7 @@ struct Op {
     }
   }
 
-  i64 eval(i64 left, i64 right) {
+  i64 eval(i64 left, i64 right) const {
     switch(this->kind){
       case Kind::Add:  return left + right;
       case Kind::Sub:  return left - right;
@@ -166,35 +166,41 @@ struct Op {
 
 struct Token {
   enum class Kind  {
-    None, Int, Op,
+    None, Int, Op, LParen, RParen,
   };
-  Kind kind;
+  const Kind kind;
   union {
-    u8 byte;
-    i64 integer;
-    Op op;
+    const u8 byte;
+    const i64 integer;
+    const Op op;
   };
   Token(): kind(Kind::None), byte('\0') {}
-  Token(u8 byte): kind(Kind::None), byte(byte) {}
+  Token(u8 byte): 
+      kind(byte == ')' ? Kind::RParen : byte == '(' ? Kind::LParen : Kind::None),
+      byte(byte) {}
   Token(i64 integer): kind(Kind::Int), integer(integer) {}
-  Token(Op op): kind(Kind::Op), op(op) {}
+  Token(Op::Kind op): kind(Kind::Op), op(op) {}
 
-  string str() {
+
+
+  static std::string name(Token::Kind kind) {
     switch(kind) {
-      case Kind::Op: return format("Op: {}", op.symbol());
-      case Kind::Int: return format("Int: {}", integer);
-      default: return format("<'{:c}'(0x{:2x})>", byte, byte);
+      case(Token::Kind::None): return "<None>";
+      case(Token::Kind::Int): return "Int";
+      case(Token::Kind::Op): return "Op";
+      case(Token::Kind::LParen): return "LParen";
+      case(Token::Kind::RParen): return "RParen";
+    }
+  }
+
+  string str() const {
+    switch(kind) {
+      case Kind::Op: return format("{}: {}", Token::name(kind), op.symbol());
+      case Kind::Int: return format("{}: {}", Token::name(kind), integer);
+      default: return format("{}: '{:c}'", Token::name(kind), byte);
     }
   }
 };
-
-std::string tokenkind_name(Token::Kind kind) {
-  switch(kind) {
-    case(Token::Kind::None): return "<none>";
-    case(Token::Kind::Int): return "Int";
-    case(Token::Kind::Op): return "Op";
-  }
-}
 
 ////== end token definition }}}
 
@@ -252,8 +258,12 @@ struct Tokenizer {
 
     u8 c = peek();
 
-    #define X(op, sym, _0, _1, _2) case (#sym)[0]: { index++; return {Op::Kind::op}; }
+    #define X(op, sym, _0, _1, _2) case (#sym)[0]: { index++; return Op::Kind::op; }
     switch(c) {
+      // check for parens
+      case('('):
+      case(')'):
+        return advance();
       OP_LIST
       default:
         if (is_digit(c)) return read_number();
@@ -365,14 +375,19 @@ struct Parser {
     if (index <= tokens.size()) index++;
     return tok;
   }
-
-  unique_ptr<Expr> parse_expr(u8 min_bp = 0) {
+  
+  unique_ptr<Expr> parse_expr(u8 min_bp = 0, u8 bracket_depth = 0) {
     auto lhs_tok = this->next();
-    //cout << lhs_tok.str() << endl;
     unique_ptr<Expr> lhs;
+
     switch (lhs_tok.kind) {
-      case Token::Kind::Int:{
+      case Token::Kind::Int: {
         lhs = Expr::Literal(lhs_tok.integer);
+        break;
+      }
+      case Token::Kind::LParen: {
+        lhs = parse_expr(0, bracket_depth+1);
+        if (next().kind != Token::Kind::RParen) throw std::runtime_error("Expected ')'");
         break;
       }
       case Token::Kind::Op: {  
@@ -388,14 +403,21 @@ struct Parser {
         lhs = make_unique<Expr>(op, std::move(rhs));
         break;
       }
-      default: throw std::runtime_error(format("Expected operator or number, got '{}'", lhs_tok.str()));
+      default: throw std::runtime_error(format("Unexpected token \"{}\"", lhs_tok.str()));
     }
 
     // parse binary operators
     while (true) {
       auto tok = peek();
+      cout << "loop: tok: " << tok.str() << endl;
       if (tok.kind == Token::Kind::None) break; // EOF
-      if (tok.kind != Token::Kind::Op) throw std::runtime_error("Expected operator!");
+      if (tok.kind == Token::Kind::RParen) {
+        if (bracket_depth == 0) {
+          throw std::runtime_error("Unbalanced brackets!");
+        }
+        break;
+      }
+      if (tok.kind != Token::Kind::Op) throw std::runtime_error(format("Expected operator, got \"{}\"!", tok.str()));
 
       // token is op
       auto op = tok.op;
@@ -406,20 +428,17 @@ struct Parser {
         if (bp < min_bp) break;
         next();
         lhs = make_unique<Expr>(op, std::move(lhs));
-        continue;
       }
 
       // Check for infix operator
-      auto [l_bp, r_bp] = op.infix_binding_power().value();
-
-      // check if this op is a postfix op and parse if so
-      if (l_bp < min_bp) break;
-
-      next();
-      auto rhs = parse_expr(r_bp);
-      lhs = make_unique<Expr>(op, std::move(lhs), std::move(rhs));
+      if (auto power = op.infix_binding_power(); power.has_value()) {
+        auto [l_bp, r_bp] = op.infix_binding_power().value();
+        if (l_bp < min_bp) break;
+        next();
+        auto rhs = parse_expr(r_bp);
+        lhs = make_unique<Expr>(op, std::move(lhs), std::move(rhs));
+      }
     }
-
     return lhs;
   }
 };
