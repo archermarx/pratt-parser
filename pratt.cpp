@@ -272,7 +272,7 @@ int main() {
     std::cout << tok.str() << std::endl;
   }
 
-  cout << "#== AST ==\n";
+  cout << "\n#== AST ===\n";
 
   Parser p {.tokens = tokens};
   
