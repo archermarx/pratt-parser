@@ -105,6 +105,14 @@ struct Token {
   }
 };
 
+std::string tokenkind_name(Token::Kind kind) {
+  switch(kind) {
+    case(Token::Kind::None): return "<none>";
+    case(Token::Kind::Int): return "Int";
+    case(Token::Kind::Op): return "Op";
+  }
+}
+
 ////== end token definition }}}
 
 bool is_space(u8 c) {
@@ -203,8 +211,9 @@ struct Expr{
 
   friend std::ostream& operator<< (std::ostream &os, const Expr& expr);
 
+  Expr(): kind(Kind::None) {};
   Expr(i64 val): kind(Kind::Literal), literal(val) {}
-  Expr(Op::Kind op, unique_ptr<Expr> left, unique_ptr<Expr> right) {
+  Expr(Op op, unique_ptr<Expr> left, unique_ptr<Expr> right) {
     kind = Kind::Expr;
     expr.op = {op};
     new (&expr.left) unique_ptr<Expr>(std::move(left));
@@ -241,20 +250,41 @@ struct Parser {
   i64 index = 0;
   
   Token peek() const {
-    if (index <= tokens.size()) return {};
+    if (index >= tokens.size()) return {};
     return tokens[index];
   }
 
+  Token next() {
+    Token tok = peek();
+    if (index <= tokens.size()) index++;
+    return tok;
+  }
+
+  void expect(Token::Kind expected) const {
+    auto got = peek().kind;
+    if (got != expected) {
+      throw std::runtime_error(
+        format("Expected token of kind {}, got {}", 
+               tokenkind_name(expected), tokenkind_name(got))
+      );
+    }
+  }
+
   unique_ptr<Expr> parse() {
-    return make_unique<Expr>(
-        Op::Kind::Add,
-        Expr::Literal(1),
-        make_unique<Expr>(
-          Op::Kind::Mul,
-          Expr::Literal(5),
-          Expr::Literal(2)
-        )
-    );
+    expect(Token::Kind::Int);
+    auto left = Expr::Literal(next().integer);
+    switch(peek().kind) {
+      case Token::Kind::None:
+        return left;
+      case Token::Kind::Op: {
+        auto op = next().op;
+        auto right = parse();
+        return make_unique<Expr>(op, std::move(left), std::move(right));
+      }
+      default:
+        expect(Token::Kind::Op);
+        return unique_ptr<Expr>();
+    }
   }
 };
 
@@ -262,7 +292,7 @@ struct Parser {
 //== end parser }}}
 
 int main() {
-  string stream = "2 + 2 / 52";
+  string stream = "2*2 + 2 / 3 * 5";
   Tokenizer tokenizer {.stream = {stream.begin(), stream.end()}};
   auto tokens = tokenizer.tokenize();
 
@@ -272,7 +302,7 @@ int main() {
     std::cout << tok.str() << std::endl;
   }
 
-  cout << "\n#== AST ===\n";
+  cout << "\n#== AST =====\n";
 
   Parser p {.tokens = tokens};
   
